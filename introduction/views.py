@@ -920,15 +920,23 @@ def ssrf_lab(request):
         if request.method=="GET":
             return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":"Read Blog About SSRF"})
         else:
-            file=request.POST["blog"]
-            try :
-                dirname = os.path.dirname(__file__)
-                filename = os.path.join(dirname, file)
-                file = open(filename,"r")
-                data = file.read()
-                return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":data})
-            except:
-                return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "No blog found"})
+            user_input = request.POST["blog"]
+            # Whitelist mapping: update with allowed blog keys and their corresponding safe file names. This mapping is the sole source of file paths used for reading blogs.
+            safe_blogs = {
+                'blog1': 'blog1.txt',
+                'blog2': 'blog2.txt',  # Add additional entries as needed.
+            }
+            dirname = os.path.dirname(__file__)
+            if user_input in safe_blogs:
+                filename = os.path.join(dirname, safe_blogs[user_input])
+                try:
+                    with open(filename, "r") as file_obj:
+                        data = file_obj.read()
+                    return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": data})
+                except:
+                    return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "No blog found"})
+            else:
+                return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "Invalid blog selection"})
     else:
         return redirect('login')
 
