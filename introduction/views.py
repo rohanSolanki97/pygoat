@@ -958,13 +958,23 @@ def ssrf_lab2(request):
         return render(request, "Lab/ssrf/ssrf_lab2.html")
 
     elif request.method == "POST":
-        url = request.POST["url"]
+        url_input = request.POST.get('url')
+        url = validate_and_get_url(url_input)  # validate_and_get_url should ensure that the URL is safe (e.g., by checking against a whitelist). Add necessary error handling if the URL is not allowed.
         try:
             response = requests.get(url)
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"response": response.content.decode()})
         except:
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"error": "Invalid URL"})
 #--------------------------------------- Server-side template injection --------------------------------------#
+
+def validate_and_get_url(input_url):
+    # Helper function to validate URLs
+    # Adjust the allowed_prefix as needed for your whitelist. This example only allows URLs starting with 'https://safe.example.com/'
+    from urllib.parse import urlparse
+    allowed_prefix = 'https://safe.example.com/'
+    if input_url and input_url.startswith(allowed_prefix):
+        return input_url
+    raise ValueError('Invalid URL provided')
 
 def ssti(request):
     if request.user.is_authenticated:
