@@ -1,5 +1,6 @@
 import datetime
 import re
+import shlex
 import subprocess
 from hashlib import md5
 
@@ -230,7 +231,7 @@ def mitre_lab_17(request):
     return render(request, 'mitre/mitre_lab_17.html')
 
 def command_out(command):
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return process.communicate()
     
 
@@ -238,7 +239,10 @@ def command_out(command):
 def mitre_lab_17_api(request):
     if request.method == "POST":
         ip = request.POST.get('ip')
-        command = "nmap " + ip 
+        import re
+        if not re.match(r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$", ip):
+            raise ValueError('Invalid IP address provided')
+        command = ['nmap', ip] 
         res, err = command_out(command)
         res = res.decode()
         err = err.decode()
