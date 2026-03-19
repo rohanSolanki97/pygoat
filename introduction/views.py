@@ -698,10 +698,18 @@ def insec_desgine_lab(request):
             Tickets = []
             for tkt in tkts:
                 Tickets.append(tkt.tickit)
-            try :
+            try:
                 count = request.POST.get("count")
-                if (int(count)+len(tkts)) <=5:
-                    for i in range(int(count)):
+                # Safely parse and validate 'count' from user input
+                try:
+                    safe_count = int(count)
+                    if safe_count < 0:
+                        safe_count = 0
+                except ValueError:
+                    safe_count = 0
+                # Ensure total tickits do not exceed the maximum allowed (5), placeholder for adjustment if needed
+                if (safe_count + len(tkts)) <= 5:
+                    for i in range(safe_count):
                         ticket_code = gentckt()
                         Tickets.append(ticket_code)
                         T = tickits(user = request.user, tickit = ticket_code)
