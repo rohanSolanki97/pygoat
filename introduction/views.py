@@ -958,9 +958,17 @@ def ssrf_lab2(request):
         return render(request, "Lab/ssrf/ssrf_lab2.html")
 
     elif request.method == "POST":
-        url = request.POST["url"]
+        allowed_urls = {
+            'service1': 'https://api.example.com/service1',
+            'service2': 'https://api.example.com/service2'
+        }
+        user_input = request.POST.get("url")
+        if user_input in allowed_urls:
+            safe_url = allowed_urls[user_input]
+        else:
+            return render(request, "Lab/ssrf/ssrf_lab2.html", {"error": "Invalid URL identifier provided."})
         try:
-            response = requests.get(url)
+            response = requests.get(safe_url)
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"response": response.content.decode()})
         except:
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"error": "Invalid URL"})
