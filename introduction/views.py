@@ -920,14 +920,22 @@ def ssrf_lab(request):
         if request.method=="GET":
             return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":"Read Blog About SSRF"})
         else:
-            file=request.POST["blog"]
-            try :
-                dirname = os.path.dirname(__file__)
-                filename = os.path.join(dirname, file)
-                file = open(filename,"r")
-                data = file.read()
-                return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":data})
-            except:
+            # Retrieve the user provided blog key
+            requested_blog = request.POST.get("blog", "")
+            
+            # Define a whitelist mapping for allowed filenames
+            allowed_files = {"blog1": "blog1.txt", "blog2": "blog2.txt"}  # TODO: Update mapping with allowed keys and filenames
+            
+            if requested_blog not in allowed_files:
+                return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "No blog found"})
+            
+            dirname = os.path.dirname(__file__)
+            filename = os.path.join(dirname, allowed_files[requested_blog])
+            try:
+                with open(filename, "r") as file:
+                    data = file.read()
+                return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": data})
+            except Exception as e:
                 return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "No blog found"})
     else:
         return redirect('login')
