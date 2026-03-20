@@ -229,8 +229,10 @@ def mitre_lab_25(request):
 def mitre_lab_17(request):
     return render(request, 'mitre/mitre_lab_17.html')
 
+# Secure command execution: using list arguments without shell=True to mitigate command injection vulnerabilities
+
 def command_out(command):
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+    process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     return process.communicate()
     
 
@@ -238,10 +240,16 @@ def command_out(command):
 def mitre_lab_17_api(request):
     if request.method == "POST":
         ip = request.POST.get('ip')
-        command = "nmap " + ip 
+        if not re.match(r'^\d{1,3}(\.\d{1,3}){3}$', ip):
+            # Input validation: raise error if IP address is invalid to prevent command injection
+            raise ValueError('Invalid IP address')
+        command = ['nmap', ip] 
         res, err = command_out(command)
-        res = res.decode()
-        err = err.decode()
+        try:
+            res = res.decode()
+            err = err.decode()
+        except Exception as e:
+            raise ValueError("Error decoding command output: " + str(e))
         pattern = "STATE SERVICE.*\\n\\n"
         ports = re.findall(pattern, res,re.DOTALL)[0][14:-2].split('\n')
         return JsonResponse({'raw_res': str(res), 'raw_err': str(err), 'ports': ports})
