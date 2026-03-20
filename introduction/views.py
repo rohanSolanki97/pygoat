@@ -920,11 +920,14 @@ def ssrf_lab(request):
         if request.method=="GET":
             return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":"Read Blog About SSRF"})
         else:
-            file=request.POST["blog"]
-            try :
-                dirname = os.path.dirname(__file__)
-                filename = os.path.join(dirname, file)
-                file = open(filename,"r")
+            file_input = request.POST["blog"]
+            if '..' in file_input or os.path.isabs(file_input):
+                return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "Invalid file name"})
+            safe_file = os.path.basename(file_input)
+            dirname = os.path.dirname(__file__)
+            filename = os.path.join(dirname, safe_file)
+            try:
+                file = open(filename, "r")
                 data = file.read()
                 return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":data})
             except:
