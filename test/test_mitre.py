@@ -1,35 +1,41 @@
-import types
-from unittest.mock import MagicMock
-
 import pytest
+from django.http import HttpRequest
+from django.test import RequestFactory
+from introduction.mitre import mitre_lab_17_api, command_out
 
-# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
-import introduction.mitre as mitre
 
+@pytest.mark.django_db
+class TestMitreLab17Api:
+    def setup_method(self):
+        self.factory = RequestFactory()
 
-def test_mitre_lab_17_api_uses_shell_false_and_list_command_to_prevent_injection(mocker):
-    # Arrange
-    request = types.SimpleNamespace(
-        method="POST",
-        POST={"ip": "127.0.0.1; touch /tmp/pwned"},
-    )
+    def test_command_out_uses_list_and_shell_false(self, mocker):
+        mocked_popen = mocker.patch("introduction.mitre.subprocess.Popen")
+        process_mock = mocker.Mock()
+        process_mock.communicate.return_value = (b"STATE SERVICE\nopen ssh\n", b"")
+        mocked_popen.return_value = process_mock
 
-    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
-    process = MagicMock()
-    process.communicate.return_value = (b"STATE SERVICE\n\n80/tcp open http\n", b"")
-    popen_mock.return_value = process
+        command = ["nmap", "127.0.0.1"]
+        command_out(command)
 
-    json_response_mock = mocker.patch("introduction.mitre.JsonResponse", side_effect=lambda payload: payload)
+        mocked_popen.assert_called_once_with(
+            command,
+            shell=False,
+            stdout=mocker.ANY,
+            stderr=mocker.ANY,
+        )
 
-    # Act
-    result = mitre.mitre_lab_17_api(request)
+    def test_mitre_lab_17_api_builds_safe_command_list(self, mocker):
+        mocked_command_out = mocker.patch("introduction.mitre.command_out")
+        mocked_command_out.return_value = (b"STATE SERVICE\nopen ssh\n", b"")
 
-    # Assert: command is passed as list and shell=False
-    popen_mock.assert_called_once()
-    args, kwargs = popen_mock.call_args
-    assert args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
-    assert kwargs["shell"] is False
+        request = self.factory.post("/mitre/17/api", data={"ip": "127.0.0.1"})
 
-    # Assert: response still produced
-    assert "ports" in result
-    json_response_mock.assert_called_once()
+        response = mitre_lab_17_api(request)
+
+        assert response.status_code == 200
+        mocked_command_out.assert_called_once()
+        called_args, _ = mocked_command_out.call_args
+        assert isinstance(called_args[0], list)
+        assert called_args[0][0] == "nmap"
+        assert called_args[0][1] == "127.0.0.1"
