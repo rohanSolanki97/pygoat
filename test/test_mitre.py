@@ -15,8 +15,8 @@ def _make_request(method="POST", post=None, cookies=None):
 
 
 def test_mitre_lab_17_api_uses_subprocess_without_shell_and_list_args(mocker):
-    # Arrange
     request = _make_request(method="POST", post={"ip": "127.0.0.1; touch /tmp/pwned"})
+
     popen_mock = mocker.Mock()
     popen_mock.communicate.return_value = (
         b"STATE SERVICE\n\n22/tcp open ssh\n",
@@ -24,10 +24,8 @@ def test_mitre_lab_17_api_uses_subprocess_without_shell_and_list_args(mocker):
     )
     popen_ctor = mocker.patch.object(mitre.subprocess, "Popen", return_value=popen_mock)
 
-    # Act
     resp = mitre.mitre_lab_17_api(request)
 
-    # Assert: command injection mitigation - no shell, args passed as list
     popen_ctor.assert_called_once()
     called_args, called_kwargs = popen_ctor.call_args
     assert called_args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
@@ -36,5 +34,4 @@ def test_mitre_lab_17_api_uses_subprocess_without_shell_and_list_args(mocker):
     assert called_kwargs["stderr"] is mitre.subprocess.PIPE
 
     assert resp.status_code == 200
-    payload = resp.json()
-    assert payload["ports"] == ["22/tcp open ssh"]
+    assert resp.json()["ports"] == ["22/tcp open ssh"]
