@@ -1,43 +1,39 @@
-import subprocess
-from types import SimpleNamespace
+import json
+import types
 
 import pytest
 
 
-# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
-from introduction import mitre
+def _make_request(*, method="POST", user_authenticated=True, post=None, body=b""):
+    user = types.SimpleNamespace(is_authenticated=user_authenticated)
+    return types.SimpleNamespace(method=method, user=user, POST=post or {}, body=body)
 
 
-def _fake_request(method: str, ip: str):
-    return SimpleNamespace(method=method, POST={"ip": ip})
+def test_mitre_lab_17_api_uses_shell_false_and_list_command(monkeypatch):
+    # Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
+    import introduction.mitre as mitre
 
+    called = {}
 
-def test_mitre_lab_17_api_uses_safe_subprocess_invocation_no_shell(mocker):
-    # Arrange
-    req = _fake_request("POST", "127.0.0.1; echo pwned")
+    def fake_popen(command, shell, stdout, stderr):
+        called["command"] = command
+        called["shell"] = shell
 
-    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
+        class Proc:
+            def communicate(self):
+                # Must match regex in mitre_lab_17_api: "STATE SERVICE.*\n\n"
+                out = b"STATE SERVICE\n\n80/tcp open http\n"
+                err = b""
+                return out, err
 
-    class _Proc:
-        def communicate(self):
-            # Minimal output that satisfies regex parsing in mitre_lab_17_api
-            stdout = b"STATE SERVICE\n\n22/tcp open ssh\n"
-            stderr = b""
-            return stdout, stderr
+        return Proc()
 
-    popen_mock.return_value = _Proc()
+    monkeypatch.setattr(mitre.subprocess, "Popen", fake_popen)
 
-    # Act
+    req = _make_request(post={"ip": "127.0.0.1; echo pwned"})
     resp = mitre.mitre_lab_17_api(req)
 
-    # Assert
-    assert resp.status_code == 200
-    popen_mock.assert_called_once()
-    args, kwargs = popen_mock.call_args
-
-    # Previously vulnerable behavior: shell=True and string command concatenation.
-    # Fixed behavior: shell=False and argv list.
-    assert kwargs.get("shell") is False
-    assert args[0] == ["nmap", "127.0.0.1; echo pwned"]
-    assert kwargs.get("stdout") is subprocess.PIPE
-    assert kwargs.get("stderr") is subprocess.PIPE
+    assert called["shell"] is False
+    assert called["command"] == ["nmap", "127.0.0.1; echo pwned"]
+    payload = json.loads(resp.content.decode("utf-8"))
+    assert payload["ports"] == ["80/tcp open http"]
