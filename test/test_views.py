@@ -14,8 +14,14 @@ def test_ssrf_lab_rejects_non_allowlisted_blog_filename_and_does_not_open_file(m
         POST={"blog": "../../etc/passwd"},
     )
 
-    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() should not be called for non-allowlisted input"))
-    render_mock = mocker.patch("introduction.views.render", side_effect=lambda req, tpl, ctx=None: {"tpl": tpl, "ctx": ctx or {}})
+    open_mock = mocker.patch(
+        "builtins.open",
+        side_effect=AssertionError("open() should not be called for non-allowlisted input"),
+    )
+    render_mock = mocker.patch(
+        "introduction.views.render",
+        side_effect=lambda req, tpl, ctx=None: {"tpl": tpl, "ctx": ctx or {}},
+    )
 
     # Act
     result = views.ssrf_lab(request)
@@ -37,7 +43,10 @@ def test_ssrf_lab_allows_allowlisted_blog_filename_and_reads_file(mocker):
 
     m = mocker.mock_open(read_data="SAFE CONTENT")
     open_mock = mocker.patch("builtins.open", m)
-    render_mock = mocker.patch("introduction.views.render", side_effect=lambda req, tpl, ctx=None: {"tpl": tpl, "ctx": ctx or {}})
+    render_mock = mocker.patch(
+        "introduction.views.render",
+        side_effect=lambda req, tpl, ctx=None: {"tpl": tpl, "ctx": ctx or {}},
+    )
 
     # Act
     result = views.ssrf_lab(request)
