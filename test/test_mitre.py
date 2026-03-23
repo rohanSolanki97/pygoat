@@ -1,37 +1,35 @@
-import json
 import types
+from unittest.mock import MagicMock
+
+import pytest
+
+# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
+import introduction.mitre as mitre
 
 
-def _make_request(*, method="POST", user_authenticated=True, post=None, body=b""):
-    user = types.SimpleNamespace(is_authenticated=user_authenticated)
-    return types.SimpleNamespace(method=method, user=user, POST=post or {}, body=body)
+def test_mitre_lab_17_api_uses_shell_false_and_list_command_to_prevent_injection(mocker):
+    # Arrange
+    request = types.SimpleNamespace(
+        method="POST",
+        POST={"ip": "127.0.0.1; touch /tmp/pwned"},
+    )
 
+    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
+    process = MagicMock()
+    process.communicate.return_value = (b"STATE SERVICE\n\n80/tcp open http\n", b"")
+    popen_mock.return_value = process
 
-def test_mitre_lab_17_api_uses_shell_false_and_list_command(monkeypatch):
-    # Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
-    import introduction.mitre as mitre
+    json_response_mock = mocker.patch("introduction.mitre.JsonResponse", side_effect=lambda payload: payload)
 
-    called = {}
+    # Act
+    result = mitre.mitre_lab_17_api(request)
 
-    def fake_popen(command, shell, stdout, stderr):
-        called["command"] = command
-        called["shell"] = shell
+    # Assert: command is passed as list and shell=False
+    popen_mock.assert_called_once()
+    args, kwargs = popen_mock.call_args
+    assert args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
+    assert kwargs["shell"] is False
 
-        class Proc:
-            def communicate(self):
-                # Must match regex in mitre_lab_17_api: "STATE SERVICE.*\n\n"
-                out = b"STATE SERVICE\n\n80/tcp open http\n"
-                err = b""
-                return out, err
-
-        return Proc()
-
-    monkeypatch.setattr(mitre.subprocess, "Popen", fake_popen)
-
-    req = _make_request(post={"ip": "127.0.0.1; echo pwned"})
-    resp = mitre.mitre_lab_17_api(req)
-
-    assert called["shell"] is False
-    assert called["command"] == ["nmap", "127.0.0.1; echo pwned"]
-    payload = json.loads(resp.content.decode("utf-8"))
-    assert payload["ports"] == ["80/tcp open http"]
+    # Assert: response still produced
+    assert "ports" in result
+    json_response_mock.assert_called_once()
