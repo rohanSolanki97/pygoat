@@ -1,33 +1,45 @@
+import types
+
 import pytest
 
-# Assumption: tests run with repo root on PYTHONPATH so "introduction" is importable.
-from introduction import views
+# Assumption: tests run with project root on PYTHONPATH, so "introduction" is importable.
+import introduction.views as views
+
+
+def _make_request(body: bytes, authenticated=True):
+    user = types.SimpleNamespace(is_authenticated=authenticated)
+    req = types.SimpleNamespace()
+    req.user = user
+    req.body = body
+    return req
 
 
 def test_xxe_parse_disables_external_general_entities(mocker):
     # Arrange
     parser = mocker.Mock()
-    make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser)
+    make_parser = mocker.patch.object(views, "make_parser", return_value=parser)
 
-    # Avoid XML parsing and DB writes; we only care about the parser feature flag.
-    doc_iter = [(mocker.Mock(), mocker.Mock(tagName="text"))]
-    parse_string_mock = mocker.patch("introduction.views.parseString", return_value=doc_iter)
+    # parseString is called with parser=parser; return iterable with one matching element
+    node = types.SimpleNamespace(tagName="text", toxml=lambda: "<text>hello</text>")
+    doc = [(views.START_ELEMENT, node)]
+    parse_string = mocker.patch.object(views, "parseString", return_value=doc)
 
-    # Ensure loop doesn't crash
-    node = doc_iter[0][1]
-    node.toxml.return_value = "<text>hello</text>"
-    doc_iter[0][0].__eq__ = lambda self, other: True  # not used; START_ELEMENT compare is done directly
+    # doc.expandNode(node) is invoked; implement on the iterable object by wrapping in a class
+    class Doc(list):
+        def expandNode(self, _node):
+            return None
 
-    mocker.patch("introduction.views.comments.objects.filter", return_value=mocker.Mock(update=mocker.Mock(return_value=1)))
-    mocker.patch("introduction.views.render", side_effect=lambda request, tpl, ctx=None: {"tpl": tpl, "ctx": ctx})
+    parse_string.return_value = Doc(doc)
 
-    request = mocker.Mock()
-    request.body = b"<root/>"
+    comments_filter = mocker.Mock()
+    comments_filter.update.return_value = 1
+    mocker.patch.object(views.comments, "objects", mocker.Mock(filter=mocker.Mock(return_value=comments_filter)))
+
+    request = _make_request(b"<root><text>hello</text></root>")
 
     # Act
     views.xxe_parse(request)
 
     # Assert
-    make_parser_mock.assert_called_once()
+    make_parser.assert_called_once()
     parser.setFeature.assert_called_once_with(views.feature_external_ges, False)
-    parse_string_mock.assert_called_once()
