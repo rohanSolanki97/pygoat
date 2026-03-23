@@ -1,8 +1,6 @@
 import json
 import types
 
-import pytest
-
 
 def _make_request(*, method="POST", user_authenticated=True, post=None, body=b""):
     user = types.SimpleNamespace(is_authenticated=user_authenticated)
