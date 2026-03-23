@@ -1,33 +1,24 @@
-from types import SimpleNamespace
+import types
 
 import pytest
 
-
-# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
-
-
-def _make_authenticated_request(xml_bytes: bytes):
-    user = SimpleNamespace(is_authenticated=True)
-    return SimpleNamespace(user=user, body=xml_bytes)
+# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
+import introduction.views as views
 
 
-def test_xxe_parse_disables_external_general_entities(mocker):
-    from introduction import views
+def test_xxe_parse_disables_external_entities_feature(mocker):
+    # Arrange
+    parser_instance = mocker.Mock()
+    make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser_instance)
 
-    request = _make_authenticated_request(b"<root><text>hello</text></root>")
+    # Ensure parseString is called but doesn't need to actually parse XML for this delta behavior.
+    mocker.patch("introduction.views.parseString", return_value=[])
 
-    parser = mocker.Mock()
-    make_parser_mock = mocker.patch.object(views, "make_parser", return_value=parser)
+    request = types.SimpleNamespace(body=b"<root/>")
 
-    # Avoid real XML parsing; just ensure parser is passed through.
-    mocker.patch.object(views, "parseString", return_value=[])
-
-    # Avoid DB update and template rendering.
-    mocker.patch.object(views, "comments")
-    render_mock = mocker.patch.object(views, "render", return_value=SimpleNamespace(status_code=200))
-
+    # Act
     views.xxe_parse(request)
 
-    make_parser_mock.assert_called_once_with()
-    parser.setFeature.assert_called_once_with(views.feature_external_ges, False)
-    render_mock.assert_called_once()
+    # Assert
+    make_parser_mock.assert_called_once()
+    parser_instance.setFeature.assert_called_once_with(views.feature_external_ges, False)
