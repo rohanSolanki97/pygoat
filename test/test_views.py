@@ -10,10 +10,7 @@ def test_ssrf_lab_blocks_non_allowlisted_file(monkeypatch):
     # Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
     import introduction.views as views
 
-    render_calls = []
-
     def fake_render(request, template, context=None):
-        render_calls.append((template, context or {}))
         return {"template": template, "context": context or {}}
 
     def fail_open(*args, **kwargs):
