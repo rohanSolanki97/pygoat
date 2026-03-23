@@ -4,51 +4,33 @@ import types
 import pytest
 
 
-# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
+def _make_request(*, authenticated=True, method="POST", post_data=None, body=b""):
+    user = types.SimpleNamespace(is_authenticated=authenticated)
+    return types.SimpleNamespace(method=method, POST=post_data or {}, body=body, user=user)
 
 
-def _make_request(method="POST", post=None, cookies=None, body=b"", user_authenticated=True):
-    class _User:
-        is_authenticated = user_authenticated
+def test_mitre_lab_17_api_uses_subprocess_without_shell_and_passes_args_list(mocker):
+    # Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
+    import introduction.mitre as mitre
 
-    req = types.SimpleNamespace()
-    req.method = method
-    req.POST = post or {}
-    req.COOKIES = cookies or {}
-    req.body = body
-    req.user = _User()
-    req.META = {}
-    req.headers = {}
-    return req
-
-
-def test_mitre_lab_17_api_uses_shell_false_and_list_command(mocker):
-    from introduction import mitre
-
-    # Arrange
-    req = _make_request(post={"ip": "127.0.0.1; touch /tmp/pwned"})
+    req = _make_request(post_data={"ip": "127.0.0.1"})
 
     popen_mock = mocker.Mock()
-    proc_mock = mocker.Mock()
-    proc_mock.communicate.return_value = (
+    popen_mock.communicate.return_value = (
         b"STATE SERVICE\n\n22/tcp open ssh\n",
         b"",
     )
-    popen_mock.return_value = proc_mock
-    mocker.patch.object(mitre.subprocess, "Popen", popen_mock)
 
-    # Avoid brittle parsing failures by controlling re.findall output
-    mocker.patch.object(mitre.re, "findall", return_value=["STATE SERVICE\n\n22/tcp open ssh\n"])
+    def _popen_side_effect(cmd, shell, stdout, stderr):
+        # Secure behavior: shell must be False and command must be a list (no string concatenation).
+        assert shell is False
+        assert cmd == ["nmap", "127.0.0.1"]
+        return popen_mock
 
-    # Act
-    resp = mitre.mitre_lab_17_api(req)
+    mocker.patch.object(mitre.subprocess, "Popen", side_effect=_popen_side_effect)
+    mocker.patch.object(mitre, "JsonResponse", side_effect=lambda payload: payload)
 
-    # Assert: command is passed as argv list and shell is disabled
-    popen_mock.assert_called_once()
-    args, kwargs = popen_mock.call_args
-    assert args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
-    assert kwargs.get("shell") is False
+    result = mitre.mitre_lab_17_api(req)
 
-    assert hasattr(resp, "content")
-    payload = json.loads(resp.content.decode("utf-8"))
-    assert payload["ports"] == ["22/tcp open ssh"]
+    assert "ports" in result
+    assert result["ports"] == ["22/tcp open ssh"]
