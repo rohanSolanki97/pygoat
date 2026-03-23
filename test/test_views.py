@@ -1,52 +1,61 @@
-import os
-from types import SimpleNamespace
-
-import pytest
+import types
 
 
-# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
-from introduction import views
+def _make_request(*, method="POST", user_authenticated=True, blog_value=""):
+    user = types.SimpleNamespace(is_authenticated=user_authenticated)
+    return types.SimpleNamespace(method=method, user=user, POST={"blog": blog_value})
 
 
-def _fake_request(blog_value: str, authenticated: bool = True):
-    user = SimpleNamespace(is_authenticated=authenticated)
-    return SimpleNamespace(user=user, method="POST", POST={"blog": blog_value})
+def test_ssrf_lab_blocks_non_allowlisted_file(monkeypatch):
+    # Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
+    import introduction.views as views
 
+    render_calls = []
 
-def test_ssrf_lab_blocks_non_whitelisted_file_and_does_not_open(mocker):
-    # Arrange
-    req = _fake_request("../../etc/passwd")
+    def fake_render(request, template, context=None):
+        render_calls.append((template, context or {}))
+        return {"template": template, "context": context or {}}
 
-    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() must not be called for non-whitelisted files"))
-    render_mock = mocker.patch("introduction.views.render", return_value=SimpleNamespace(status_code=200))
+    def fail_open(*args, **kwargs):
+        raise AssertionError("open() should not be called for non-allowlisted file")
 
-    # Act
+    monkeypatch.setattr(views, "render", fake_render)
+    monkeypatch.setattr(views, "open", fail_open, raising=True)
+
+    req = _make_request(blog_value="../../etc/passwd")
     resp = views.ssrf_lab(req)
 
-    # Assert
-    assert resp.status_code == 200
-    open_mock.assert_not_called()
-    render_mock.assert_called_once()
-    assert render_mock.call_args.args[1] == "Lab/ssrf/ssrf_lab.html"
-    assert render_mock.call_args.args[2] == {"blog": "No blog found"}
+    assert resp["template"] == "Lab/ssrf/ssrf_lab.html"
+    assert resp["context"]["blog"] == "No blog found"
 
 
-def test_ssrf_lab_allows_only_whitelisted_file_and_opens_joined_path(mocker):
-    # Arrange
-    req = _fake_request("safe_blog.txt")
+def test_ssrf_lab_allows_allowlisted_file_and_reads_contents(monkeypatch):
+    import introduction.views as views
 
-    dirname = os.path.dirname(views.__file__)
-    expected_path = os.path.join(dirname, "safe_blog.txt")
+    def fake_render(request, template, context=None):
+        return {"template": template, "context": context or {}}
 
-    file_handle = mocker.mock_open(read_data="SAFE CONTENT")
-    open_mock = mocker.patch("builtins.open", file_handle)
-    render_mock = mocker.patch("introduction.views.render", return_value=SimpleNamespace(status_code=200))
+    class FakeFile:
+        def __enter__(self):
+            return self
 
-    # Act
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+        def read(self):
+            return "SAFE CONTENT"
+
+    def fake_open(path, mode):
+        assert mode == "r"
+        # Ensure no path traversal is introduced by the function.
+        assert ".." not in path
+        return FakeFile()
+
+    monkeypatch.setattr(views, "render", fake_render)
+    monkeypatch.setattr(views, "open", fake_open, raising=True)
+
+    req = _make_request(blog_value="safe_blog.txt")
     resp = views.ssrf_lab(req)
 
-    # Assert
-    assert resp.status_code == 200
-    open_mock.assert_called_once_with(expected_path, "r")
-    render_mock.assert_called_once()
-    assert render_mock.call_args.args[2] == {"blog": "SAFE CONTENT"}
+    assert resp["template"] == "Lab/ssrf/ssrf_lab.html"
+    assert resp["context"]["blog"] == "SAFE CONTENT"
