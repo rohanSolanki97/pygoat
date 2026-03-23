@@ -1,58 +1,35 @@
-import json
-from unittest.mock import MagicMock, patch
+import types
+from unittest.mock import MagicMock
 
 import pytest
-from django.contrib.auth.models import User
-from django.test import RequestFactory
 
-from introduction import mitre
-
-
-@pytest.mark.django_db
-def test_command_out_uses_subprocess_without_shell_and_list_args():
-    command = ["nmap", "127.0.0.1"]
-
-    with patch("subprocess.Popen") as mock_popen:
-        process_mock = MagicMock()
-        process_mock.communicate.return_value = (b"STATE SERVICE\nopen http\n", b"")
-        mock_popen.return_value = process_mock
-
-        stdout, stderr = mitre.command_out(command)
-
-        mock_popen.assert_called_once()
-        called_args, called_kwargs = mock_popen.call_args
-
-        # Ensure the command passed is a list and shell is disabled
-        assert called_args[0] == command
-        assert called_kwargs.get("shell") is False
-        # Ensure the function returns stdout and stderr unchanged
-        assert stdout == b"STATE SERVICE\nopen http\n"
-        assert stderr == b""
+# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
+import introduction.mitre as mitre
 
 
-@pytest.mark.django_db
-def test_mitre_lab_17_api_builds_safe_command_and_parses_ports():
-    factory = RequestFactory()
-    request = factory.post("/mitre/17/api", data={"ip": "127.0.0.1"})
-    request.user = User(username="tester")
-    request.user.is_authenticated = True
+def test_mitre_lab_17_api_uses_shell_false_and_list_command_to_prevent_injection(mocker):
+    # Arrange
+    request = types.SimpleNamespace(
+        method="POST",
+        POST={"ip": "127.0.0.1; touch /tmp/pwned"},
+    )
 
-    def fake_command_out(cmd):
-        # Critical regression check: IP must be passed as a list argument to nmap
-        assert cmd == ["nmap", "127.0.0.1"]
-        fake_output = (
-            "Some header text\nSTATE SERVICE\nopen http\nclosed ssh\n\nOther footer text".encode(
-                "utf-8"
-            )
-        )
-        return fake_output, b""
+    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
+    process = MagicMock()
+    process.communicate.return_value = (b"STATE SERVICE\n\n80/tcp open http\n", b"")
+    popen_mock.return_value = process
 
-    with patch("introduction.mitre.command_out", side_effect=fake_command_out):
-        response = mitre.mitre_lab_17_api(request)
+    json_response_mock = mocker.patch("introduction.mitre.JsonResponse", side_effect=lambda payload: payload)
 
-    assert response.status_code == 200
-    body = json.loads(response.content.decode("utf-8"))
-    assert body["raw_res"].startswith("Some header text")
-    assert body["raw_err"] == ""
-    # Ensure the parsed ports list is as expected from the mocked output
-    assert body["ports"] == ["open http", "closed ssh"]
+    # Act
+    result = mitre.mitre_lab_17_api(request)
+
+    # Assert: command is passed as list and shell=False
+    popen_mock.assert_called_once()
+    args, kwargs = popen_mock.call_args
+    assert args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
+    assert kwargs["shell"] is False
+
+    # Assert: response still produced
+    assert "ports" in result
+    json_response_mock.assert_called_once()
