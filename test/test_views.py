@@ -4,65 +4,49 @@ import types
 import pytest
 
 
-# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
+def _make_request(*, authenticated=True, blog_value):
+    user = types.SimpleNamespace(is_authenticated=authenticated)
+    return types.SimpleNamespace(method="POST", POST={"blog": blog_value}, user=user)
 
 
-def _make_request(blog_value: str, user_authenticated: bool = True):
-    class _User:
-        is_authenticated = user_authenticated
+def test_ssrf_lab_rejects_non_allowlisted_blog_filename(mocker):
+    import introduction.views as views
 
-    req = types.SimpleNamespace()
-    req.method = "POST"
-    req.POST = {"blog": blog_value}
-    req.user = _User()
-    req.COOKIES = {}
-    req.body = b""
-    req.META = {}
-    req.headers = {}
-    return req
-
-
-def test_ssrf_lab_rejects_non_allowlisted_blog_and_does_not_open_file(mocker):
-    from introduction import views
-
-    # Arrange: attempt path traversal
-    req = _make_request("../../etc/passwd")
-
+    # Ensure we don't touch filesystem and we can observe behavior.
     open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() should not be called"))
-    render_mock = mocker.patch.object(views, "render", return_value="RENDERED")
+    render_mock = mocker.patch.object(views, "render", side_effect=lambda request, template, context: context)
 
-    # Act
-    resp = views.ssrf_lab(req)
+    req = _make_request(blog_value="../../etc/passwd")
 
-    # Assert
-    assert resp == "RENDERED"
+    result = views.ssrf_lab(req)
+
+    assert result == {"blog": "No blog found"}
     open_mock.assert_not_called()
     render_mock.assert_called_once()
-    _, _, ctx = render_mock.call_args[0]
-    assert ctx == {"blog": "No blog found"}
 
 
-def test_ssrf_lab_allows_allowlisted_blog_and_reads_from_joined_path(mocker):
-    from introduction import views
+def test_ssrf_lab_allows_only_allowlisted_files_and_opens_joined_path(mocker, tmp_path):
+    import introduction.views as views
 
-    # Arrange
-    req = _make_request("safe_blog.txt")
+    # Arrange a fake directory for __file__ resolution.
+    fake_dir = tmp_path
+    safe_file = fake_dir / "safe_blog.txt"
+    safe_file.write_text("hello")
 
-    dirname_mock = mocker.patch.object(views.os.path, "dirname", return_value="/app/introduction")
-    join_mock = mocker.patch.object(views.os.path, "join", wraps=os.path.join)
+    mocker.patch.object(views.os.path, "dirname", return_value=str(fake_dir))
 
-    file_handle = mocker.mock_open(read_data="SAFE CONTENT")
-    open_mock = mocker.patch("builtins.open", file_handle)
-    render_mock = mocker.patch.object(views, "render", return_value="RENDERED")
+    # Use real open but assert the path is within fake_dir and matches allowlist.
+    real_open = open
 
-    # Act
-    resp = views.ssrf_lab(req)
+    def _open_side_effect(path, mode="r", *args, **kwargs):
+        assert os.path.abspath(path) == os.path.abspath(str(safe_file))
+        return real_open(path, mode, *args, **kwargs)
 
-    # Assert
-    assert resp == "RENDERED"
-    dirname_mock.assert_called_once()
-    join_mock.assert_called_once_with("/app/introduction", "safe_blog.txt")
-    open_mock.assert_called_once()
-    render_mock.assert_called_once()
-    _, _, ctx = render_mock.call_args[0]
-    assert ctx == {"blog": "SAFE CONTENT"}
+    mocker.patch("builtins.open", side_effect=_open_side_effect)
+    mocker.patch.object(views, "render", side_effect=lambda request, template, context: context)
+
+    req = _make_request(blog_value="safe_blog.txt")
+
+    result = views.ssrf_lab(req)
+
+    assert result == {"blog": "hello"}
