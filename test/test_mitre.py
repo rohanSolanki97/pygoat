@@ -1,3 +1,6 @@
+import subprocess
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -5,54 +8,36 @@ import pytest
 from introduction import mitre
 
 
-class _DummyPost:
-    def __init__(self, data):
-        self._data = data
-
-    def get(self, key, default=None):
-        return self._data.get(key, default)
+def _fake_request(method: str, ip: str):
+    return SimpleNamespace(method=method, POST={"ip": ip})
 
 
-class _DummyRequest:
-    def __init__(self, method="POST", post=None):
-        self.method = method
-        self.POST = _DummyPost(post or {})
+def test_mitre_lab_17_api_uses_safe_subprocess_invocation_no_shell(mocker):
+    # Arrange
+    req = _fake_request("POST", "127.0.0.1; echo pwned")
 
+    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
 
-def test_mitre_lab_17_api_uses_list_command_and_shell_false(monkeypatch):
-    captured = {}
+    class _Proc:
+        def communicate(self):
+            # Minimal output that satisfies regex parsing in mitre_lab_17_api
+            stdout = b"STATE SERVICE\n\n22/tcp open ssh\n"
+            stderr = b""
+            return stdout, stderr
 
-    def fake_command_out(command):
-        captured["command"] = command
-        # Minimal output that satisfies the regex parsing in mitre_lab_17_api
-        res = "STATE SERVICE\n\n22/tcp open ssh\n"
-        err = ""
-        return res.encode(), err.encode()
+    popen_mock.return_value = _Proc()
 
-    monkeypatch.setattr(mitre, "command_out", fake_command_out)
-
-    req = _DummyRequest(post={"ip": "127.0.0.1; echo pwned"})
+    # Act
     resp = mitre.mitre_lab_17_api(req)
 
-    assert captured["command"] == ["nmap", "127.0.0.1; echo pwned"]
+    # Assert
     assert resp.status_code == 200
+    popen_mock.assert_called_once()
+    args, kwargs = popen_mock.call_args
 
-
-def test_command_out_invokes_subprocess_with_shell_false(monkeypatch):
-    popen_calls = {}
-
-    class _FakeProcess:
-        def communicate(self):
-            return b"", b""
-
-    def fake_popen(command, shell, stdout, stderr):
-        popen_calls["command"] = command
-        popen_calls["shell"] = shell
-        return _FakeProcess()
-
-    monkeypatch.setattr(mitre.subprocess, "Popen", fake_popen)
-
-    mitre.command_out(["nmap", "127.0.0.1"])
-
-    assert popen_calls["command"] == ["nmap", "127.0.0.1"]
-    assert popen_calls["shell"] is False
+    # Previously vulnerable behavior: shell=True and string command concatenation.
+    # Fixed behavior: shell=False and argv list.
+    assert kwargs.get("shell") is False
+    assert args[0] == ["nmap", "127.0.0.1; echo pwned"]
+    assert kwargs.get("stdout") is subprocess.PIPE
+    assert kwargs.get("stderr") is subprocess.PIPE
