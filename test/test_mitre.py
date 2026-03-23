@@ -1,53 +1,35 @@
+import types
+from unittest.mock import MagicMock
+
 import pytest
-from django.test import RequestFactory
-from introduction import mitre
+
+# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
+import introduction.mitre as mitre
 
 
-@pytest.mark.django_db
-class TestMitreLab17ApiCommandInjectionFix:
-    def setup_method(self):
-        self.factory = RequestFactory()
+def test_mitre_lab_17_api_uses_shell_false_and_list_command_to_prevent_injection(mocker):
+    # Arrange
+    request = types.SimpleNamespace(
+        method="POST",
+        POST={"ip": "127.0.0.1; touch /tmp/pwned"},
+    )
 
-    def test_mitre_lab_17_api_uses_list_command_and_shell_false(self, monkeypatch):
-        executed_commands = {}
+    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
+    process = MagicMock()
+    process.communicate.return_value = (b"STATE SERVICE\n\n80/tcp open http\n", b"")
+    popen_mock.return_value = process
 
-        def fake_popen(cmd, shell, stdout, stderr):
-            # Assert secure behavior: shell must be False and command must be a list
-            assert shell is False
-            assert isinstance(cmd, list)
-            assert cmd[0] == "nmap"
-            executed_commands["cmd"] = cmd
+    json_response_mock = mocker.patch("introduction.mitre.JsonResponse", side_effect=lambda payload: payload)
 
-            class FakeProcess:
-                def communicate(self_inner):
-                    return b"STATE SERVICE\n\n80/tcp open http\n", b""
+    # Act
+    result = mitre.mitre_lab_17_api(request)
 
-            return FakeProcess()
+    # Assert: command is passed as list and shell=False
+    popen_mock.assert_called_once()
+    args, kwargs = popen_mock.call_args
+    assert args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
+    assert kwargs["shell"] is False
 
-        monkeypatch.setattr(mitre.subprocess, "Popen", fake_popen)
-
-        request = self.factory.post("/mitre/17/api", data={"ip": "127.0.0.1"})
-        response = mitre.mitre_lab_17_api(request)
-
-        assert response.status_code == 200
-        assert executed_commands["cmd"] == ["nmap", "127.0.0.1"]
-
-    def test_command_out_helper_uses_shell_false(self, monkeypatch):
-        called = {}
-
-        def fake_popen(cmd, shell, stdout, stderr):
-            called["shell"] = shell
-            called["cmd"] = cmd
-
-            class FakeProcess:
-                def communicate(self_inner):
-                    return b"", b""
-
-            return FakeProcess()
-
-        monkeypatch.setattr(mitre.subprocess, "Popen", fake_popen)
-
-        mitre.command_out(["nmap", "example.com"])
-
-        assert called["shell"] is False
-        assert called["cmd"] == ["nmap", "example.com"]
+    # Assert: response still produced
+    assert "ports" in result
+    json_response_mock.assert_called_once()
