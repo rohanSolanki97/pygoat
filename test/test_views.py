@@ -1,4 +1,6 @@
 import os
+from types import SimpleNamespace
+
 import pytest
 
 
@@ -6,78 +8,45 @@ import pytest
 from introduction import views
 
 
-class _DummyUser:
-    def __init__(self, authenticated=True):
-        self.is_authenticated = authenticated
+def _fake_request(blog_value: str, authenticated: bool = True):
+    user = SimpleNamespace(is_authenticated=authenticated)
+    return SimpleNamespace(user=user, method="POST", POST={"blog": blog_value})
 
 
-class _DummyPost:
-    def __init__(self, data):
-        self._data = data
-
-    def get(self, key, default=None):
-        return self._data.get(key, default)
-
-    def __getitem__(self, key):
-        return self._data[key]
-
-
-class _DummyRequest:
-    def __init__(self, method="POST", post=None, authenticated=True):
-        self.method = method
-        self.user = _DummyUser(authenticated)
-        self.POST = _DummyPost(post or {})
-
-
-def test_ssrf_lab_rejects_non_allowlisted_filename_and_does_not_open(monkeypatch):
+def test_ssrf_lab_blocks_non_whitelisted_file_and_does_not_open(mocker):
     # Arrange
-    open_called = {"called": False}
+    req = _fake_request("../../etc/passwd")
 
-    def fake_open(*args, **kwargs):
-        open_called["called"] = True
-        raise AssertionError("open() should not be called for non-allowlisted input")
-
-    monkeypatch.setattr(views, "open", fake_open, raising=True)
-
-    render_calls = []
-
-    def fake_render(request, template, context=None):
-        render_calls.append((template, context or {}))
-        return {"template": template, "context": context or {}}
-
-    monkeypatch.setattr(views, "render", fake_render)
-
-    req = _DummyRequest(post={"blog": "../../etc/passwd"})
+    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() must not be called for non-whitelisted files"))
+    render_mock = mocker.patch("introduction.views.render", return_value=SimpleNamespace(status_code=200))
 
     # Act
     resp = views.ssrf_lab(req)
 
     # Assert
-    assert open_called["called"] is False
-    assert resp["template"] == "Lab/ssrf/ssrf_lab.html"
-    assert resp["context"]["blog"] == "No blog found"
+    assert resp.status_code == 200
+    open_mock.assert_not_called()
+    render_mock.assert_called_once()
+    assert render_mock.call_args.args[1] == "Lab/ssrf/ssrf_lab.html"
+    assert render_mock.call_args.args[2] == {"blog": "No blog found"}
 
 
-def test_ssrf_lab_allows_only_allowlisted_files(monkeypatch, tmp_path):
-    # Arrange: force __file__ dirname to our temp dir and create an allowlisted file.
-    safe_file = tmp_path / "safe_blog.txt"
-    safe_file.write_text("SAFE CONTENT", encoding="utf-8")
+def test_ssrf_lab_allows_only_whitelisted_file_and_opens_joined_path(mocker):
+    # Arrange
+    req = _fake_request("safe_blog.txt")
 
-    monkeypatch.setattr(views, "__file__", str(tmp_path / "views.py"), raising=False)
+    dirname = os.path.dirname(views.__file__)
+    expected_path = os.path.join(dirname, "safe_blog.txt")
 
-    render_calls = []
-
-    def fake_render(request, template, context=None):
-        render_calls.append((template, context or {}))
-        return {"template": template, "context": context or {}}
-
-    monkeypatch.setattr(views, "render", fake_render)
-
-    req = _DummyRequest(post={"blog": "safe_blog.txt"})
+    file_handle = mocker.mock_open(read_data="SAFE CONTENT")
+    open_mock = mocker.patch("builtins.open", file_handle)
+    render_mock = mocker.patch("introduction.views.render", return_value=SimpleNamespace(status_code=200))
 
     # Act
     resp = views.ssrf_lab(req)
 
     # Assert
-    assert resp["template"] == "Lab/ssrf/ssrf_lab.html"
-    assert resp["context"]["blog"] == "SAFE CONTENT"
+    assert resp.status_code == 200
+    open_mock.assert_called_once_with(expected_path, "r")
+    render_mock.assert_called_once()
+    assert render_mock.call_args.args[2] == {"blog": "SAFE CONTENT"}
