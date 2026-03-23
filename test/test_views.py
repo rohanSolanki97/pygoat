@@ -2,30 +2,42 @@ import types
 
 import pytest
 
-# Assumption: tests run with repo root on PYTHONPATH so "introduction" is importable.
-import introduction.views as views
+
+# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
 
 
-def _make_request(xml_body: str):
+def _make_request(body: bytes, user_authenticated: bool = True):
+    class _User:
+        is_authenticated = user_authenticated
+
     req = types.SimpleNamespace()
-    req.user = types.SimpleNamespace(is_authenticated=True)
-    req.body = xml_body.encode("utf-8")
+    req.method = "POST"
+    req.body = body
+    req.user = _User()
+    req.POST = {}
+    req.COOKIES = {}
+    req.META = {}
+    req.headers = {}
     return req
 
 
-def test_xxe_parse_disables_external_entities(mocker):
+def test_xxe_parse_disables_external_general_entities(mocker):
+    from introduction import views
+
     # Arrange
-    parser = mocker.Mock()
-    mocker.patch("introduction.views.make_parser", return_value=parser)
+    parser_mock = mocker.Mock()
+    make_parser_mock = mocker.patch.object(views, "make_parser", return_value=parser_mock)
 
-    # Avoid real XML parsing and DB writes; only verify parser feature is set securely
-    mocker.patch("introduction.views.parseString", return_value=[])
-    mocker.patch("introduction.views.comments")
+    # parseString is called with parser=parser; we don't need real XML parsing here
+    doc_iterable = []
+    mocker.patch.object(views, "parseString", return_value=doc_iterable)
 
-    request = _make_request("<root><text>hello</text></root>")
+    # Avoid DB interaction
+    mocker.patch.object(views, "comments")
 
     # Act
-    views.xxe_parse(request)
+    views.xxe_parse(_make_request(b"<root/>"))
 
-    # Assert: external general entities must be disabled
-    parser.setFeature.assert_any_call(views.feature_external_ges, False)
+    # Assert
+    make_parser_mock.assert_called_once()
+    parser_mock.setFeature.assert_called_once_with(views.feature_external_ges, False)
