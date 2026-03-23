@@ -1,42 +1,44 @@
-import types
-
 import pytest
 
-# Assumption: tests run with project root on PYTHONPATH, so "introduction" is importable.
-import introduction.views as views
+
+# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
+from introduction import views
 
 
-def _make_request(body: bytes, authenticated=True):
-    user = types.SimpleNamespace(is_authenticated=authenticated)
-    req = types.SimpleNamespace()
-    req.user = user
-    req.body = body
-    return req
+class _DummyUser:
+    def __init__(self, authenticated=True):
+        self.is_authenticated = authenticated
 
 
-def test_xxe_parse_disables_external_general_entities(mocker):
-    parser = mocker.Mock()
-    make_parser = mocker.patch.object(views, "make_parser", return_value=parser)
+class _DummyRequest:
+    def __init__(self, body: bytes, authenticated=True):
+        self.user = _DummyUser(authenticated)
+        self.body = body
 
-    node = types.SimpleNamespace(tagName="text", toxml=lambda: "<text>hello</text>")
-    doc = [(views.START_ELEMENT, node)]
-    parse_string = mocker.patch.object(views, "parseString", return_value=doc)
 
-    class Doc(list):
-        def expandNode(self, _node):
-            return None
+def test_xxe_parse_disables_external_general_entities(monkeypatch):
+    parser_instance = object()
+    calls = {"setFeature": []}
 
-    parse_string.return_value = Doc(doc)
+    class _FakeParser:
+        def setFeature(self, feature, value):
+            calls["setFeature"].append((feature, value))
 
-    comments_filter = mocker.Mock()
-    comments_filter.update.return_value = 1
-    mocker.patch.object(
-        views.comments, "objects", mocker.Mock(filter=mocker.Mock(return_value=comments_filter))
-    )
+    def fake_make_parser():
+        return _FakeParser()
 
-    request = _make_request(b"<root><text>hello</text></root>")
+    def fake_parse_string(xml_text, parser=None):
+        # Ensure the parser object created by make_parser is passed through.
+        assert isinstance(parser, _FakeParser)
+        # Return an empty iterable so the function fails later; we only assert the security-relevant call.
+        return []
 
-    views.xxe_parse(request)
+    monkeypatch.setattr(views, "make_parser", fake_make_parser)
+    monkeypatch.setattr(views, "parseString", fake_parse_string)
 
-    make_parser.assert_called_once()
-    parser.setFeature.assert_called_once_with(views.feature_external_ges, False)
+    req = _DummyRequest(body=b"<root><text>hello</text></root>")
+
+    with pytest.raises(UnboundLocalError):
+        views.xxe_parse(req)
+
+    assert calls["setFeature"] == [(views.feature_external_ges, False)]
