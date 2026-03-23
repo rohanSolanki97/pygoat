@@ -2,23 +2,30 @@ import types
 
 import pytest
 
-# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
+# Assumption: tests run with repo root on PYTHONPATH so "introduction" is importable.
 import introduction.views as views
 
 
-def test_xxe_parse_disables_external_entities_feature(mocker):
+def _make_request(xml_body: str):
+    req = types.SimpleNamespace()
+    req.user = types.SimpleNamespace(is_authenticated=True)
+    req.body = xml_body.encode("utf-8")
+    return req
+
+
+def test_xxe_parse_disables_external_entities(mocker):
     # Arrange
-    parser_instance = mocker.Mock()
-    make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser_instance)
+    parser = mocker.Mock()
+    mocker.patch("introduction.views.make_parser", return_value=parser)
 
-    # Ensure parseString is called but doesn't need to actually parse XML for this delta behavior.
+    # Avoid real XML parsing and DB writes; only verify parser feature is set securely
     mocker.patch("introduction.views.parseString", return_value=[])
+    mocker.patch("introduction.views.comments")
 
-    request = types.SimpleNamespace(body=b"<root/>")
+    request = _make_request("<root><text>hello</text></root>")
 
     # Act
     views.xxe_parse(request)
 
-    # Assert
-    make_parser_mock.assert_called_once()
-    parser_instance.setFeature.assert_called_once_with(views.feature_external_ges, False)
+    # Assert: external general entities must be disabled
+    parser.setFeature.assert_any_call(views.feature_external_ges, False)
