@@ -1,75 +1,58 @@
 import pytest
 from django.test import RequestFactory
-from xml.sax import SAXNotRecognizedException
+from xml.dom.pulldom import START_ELEMENT
 
 from introduction import views
+from introduction.views import xxe_parse
 
 
 @pytest.mark.django_db
-class TestXxeParseFix:
+class TestXXEParse:
     def setup_method(self):
         self.factory = RequestFactory()
 
-    def test_xxe_parse_disables_external_entities(self, monkeypatch):
-        features_set = {}
+    def test_xxe_parse_does_not_resolve_external_entities(self, mocker):
+        malicious_xml = """<?xml version='1.0'?>
+<!DOCTYPE foo [
+  <!ELEMENT foo ANY >
+  <!ENTITY xxe SYSTEM "file:///etc/passwd" >]>
+<text>&xxe;</text>"""
+        request = self.factory.post("/xxe/parse", data=malicious_xml, content_type="application/xml")
 
-        class FakeParser:
-            def setFeature(self, feature, value):
-                features_set[feature] = value
+        mocked_make_parser = mocker.patch("introduction.views.make_parser")
+        mocked_parser = mocker.Mock()
+        mocked_make_parser.return_value = mocked_parser
 
-        def fake_make_parser():
-            return FakeParser()
+        mocked_parse_string = mocker.patch("introduction.views.parseString")
+        mocked_events = [
+            (START_ELEMENT, mocker.Mock(tagName="text", toxml=lambda: "<text>safe</text>")),
+        ]
+        mocked_parse_string.return_value = mocked_events
 
-        def fake_parse_string(xml_string, parser):
-            # Return minimal iterable structure consumed by xxe_parse
-            class FakeNode:
-                tagName = "text"
+        mocked_comments = mocker.patch("introduction.views.comments.objects.filter")
+        mocked_comments.return_value.update.return_value = 1
 
-                def toxml(self):
-                    return "<text>safe</text>"
+        response = xxe_parse(request)
 
-            def iterator():
-                yield (views.START_ELEMENT, FakeNode())
-
-            return iterator()
-
-        monkeypatch.setattr(views, "make_parser", fake_make_parser)
-        monkeypatch.setattr(views, "parseString", fake_parse_string)
-
-        request = self.factory.post("/xxe/parse", data="<text>safe</text>", content_type="application/xml")
-
-        response = views.xxe_parse(request)
-
+        mocked_parser.setFeature.assert_any_call(views.feature_external_ges, False)
         assert response.status_code == 200
-        assert features_set.get(views.feature_external_ges) is False
 
-    def test_xxe_parse_handles_parser_feature_errors_gracefully(self, monkeypatch):
-        def fake_make_parser():
-            class BrokenParser:
-                def setFeature(self, feature, value):
-                    raise SAXNotRecognizedException("feature not supported")
+    def test_xxe_parse_updates_comment_with_parsed_text(self, mocker):
+        xml = "<text>Hello</text>"
+        request = self.factory.post("/xxe/parse", data=xml, content_type="application/xml")
 
-            return BrokenParser()
+        mocker.patch("introduction.views.make_parser", return_value=mocker.Mock())
+        mocked_parse_string = mocker.patch("introduction.views.parseString")
+        mocked_events = [
+            (START_ELEMENT, mocker.Mock(tagName="text", toxml=lambda: "<text>Hello</text>")),
+        ]
+        mocked_parse_string.return_value = mocked_events
 
-        def fake_parse_string(xml_string, parser):
-            class FakeNode:
-                tagName = "text"
+        mocked_comments = mocker.patch("introduction.views.comments.objects.filter")
+        mocked_comments.return_value.update.return_value = 1
 
-                def toxml(self):
-                    return "<text>safe</text>"
+        response = xxe_parse(request)
 
-            def iterator():
-                yield (views.START_ELEMENT, FakeNode())
-
-            return iterator()
-
-        monkeypatch.setattr(views, "make_parser", fake_make_parser)
-        monkeypatch.setattr(views, "parseString", fake_parse_string)
-
-        request = self.factory.post("/xxe/parse", data="<text>safe</text>", content_type="application/xml")
-
-        with pytest.raises(SAXNotRecognizedException):
-            # Even if feature setting fails, the vulnerability (external entity expansion)
-            # is not reintroduced in this test; we only assert that the code path
-            # attempts to set the secure feature and surfaces parser errors.
-            views.xxe_parse(request)
+        mocked_comments.assert_called_once_with(id=1)
+        mocked_comments.return_value.update.assert_called_once_with(comment="Hello")
+        assert response.status_code == 200
