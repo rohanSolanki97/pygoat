@@ -1,49 +1,58 @@
-from types import SimpleNamespace
+import types
 
 import pytest
 
-
-# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
-
-
-def _make_authenticated_post_request(blog_value: str):
-    user = SimpleNamespace(is_authenticated=True)
-    return SimpleNamespace(user=user, method="POST", POST={"blog": blog_value})
+# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
+import introduction.views as views
 
 
-def test_ssrf_lab_rejects_non_allowlisted_blog_filename(mocker):
-    from introduction import views
+def test_ssrf_lab_rejects_non_allowlisted_blog_filename_and_does_not_open_file(mocker):
+    # Arrange
+    request = types.SimpleNamespace(
+        user=types.SimpleNamespace(is_authenticated=True),
+        method="POST",
+        POST={"blog": "../../etc/passwd"},
+    )
 
-    request = _make_authenticated_post_request("../../etc/passwd")
+    open_mock = mocker.patch(
+        "builtins.open",
+        side_effect=AssertionError("open() should not be called for non-allowlisted input"),
+    )
+    render_mock = mocker.patch(
+        "introduction.views.render",
+        side_effect=lambda req, tpl, ctx=None: {"tpl": tpl, "ctx": ctx or {}},
+    )
 
-    render_mock = mocker.patch.object(views, "render", return_value=SimpleNamespace(status_code=200))
-    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() must not be called for disallowed files"))
+    # Act
+    result = views.ssrf_lab(request)
 
-    views.ssrf_lab(request)
-
+    # Assert
     assert open_mock.call_count == 0
+    assert result["tpl"] == "Lab/ssrf/ssrf_lab.html"
+    assert result["ctx"]["blog"] == "No blog found"
     render_mock.assert_called_once()
-    assert render_mock.call_args.args[1] == "Lab/ssrf/ssrf_lab.html"
-    assert render_mock.call_args.args[2] == {"blog": "No blog found"}
 
 
-def test_ssrf_lab_allows_only_allowlisted_files_and_uses_safe_join(mocker):
-    from introduction import views
-
-    request = _make_authenticated_post_request("safe_blog.txt")
-
-    dirname_mock = mocker.patch.object(views.os.path, "dirname", return_value="/app/introduction")
-    join_mock = mocker.patch.object(views.os.path, "join", return_value="/app/introduction/safe_blog.txt")
+def test_ssrf_lab_allows_allowlisted_blog_filename_and_reads_file(mocker):
+    # Arrange
+    request = types.SimpleNamespace(
+        user=types.SimpleNamespace(is_authenticated=True),
+        method="POST",
+        POST={"blog": "safe_blog.txt"},
+    )
 
     m = mocker.mock_open(read_data="SAFE CONTENT")
-    mocker.patch("builtins.open", m)
+    open_mock = mocker.patch("builtins.open", m)
+    render_mock = mocker.patch(
+        "introduction.views.render",
+        side_effect=lambda req, tpl, ctx=None: {"tpl": tpl, "ctx": ctx or {}},
+    )
 
-    render_mock = mocker.patch.object(views, "render", return_value=SimpleNamespace(status_code=200))
+    # Act
+    result = views.ssrf_lab(request)
 
-    views.ssrf_lab(request)
-
-    dirname_mock.assert_called_once()
-    join_mock.assert_called_once_with("/app/introduction", "safe_blog.txt")
-    m.assert_called_once_with("/app/introduction/safe_blog.txt", "r")
+    # Assert
+    open_mock.assert_called_once()
+    assert result["tpl"] == "Lab/ssrf/ssrf_lab.html"
+    assert result["ctx"]["blog"] == "SAFE CONTENT"
     render_mock.assert_called_once()
-    assert render_mock.call_args.args[2] == {"blog": "SAFE CONTENT"}
