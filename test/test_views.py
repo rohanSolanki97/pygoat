@@ -1,40 +1,66 @@
-import types
+from types import SimpleNamespace
 
 import pytest
 
-# Assumption: Django app module path is "introduction.views" based on source file location.
-import introduction.views as views
+
+# Assumption: tests run with repository root on PYTHONPATH so `introduction` is importable.
 
 
-def test_xxe_parse_disables_external_general_entities(mocker):
-    # Arrange
-    request = types.SimpleNamespace(
-        user=types.SimpleNamespace(is_authenticated=True),
-        body=b"<text>Hello</text>",
-    )
+def test_xxe_parse_disables_external_general_entities(monkeypatch):
+    """Regression test for XXE fix: ensure external general entities are disabled."""
+    from introduction import views
 
-    parser = mocker.Mock()
-    make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser)
+    class FakeParser:
+        def __init__(self):
+            self.features = []
 
-    # parseString is used as an iterator of (event, node)
-    node = types.SimpleNamespace(tagName="text", toxml=lambda: "<text>Hello</text>")
-    parse_string_mock = mocker.patch(
-        "introduction.views.parseString",
-        return_value=[(views.START_ELEMENT, node)],
-    )
+        def setFeature(self, feature, value):
+            self.features.append((feature, value))
 
-    # comments.objects.filter(id=1).update(comment=text)
-    comments_mock = mocker.patch("introduction.views.comments")
-    comments_mock.objects.filter.return_value.update.return_value = 1
+    fake_parser = FakeParser()
 
-    render_mock = mocker.patch("introduction.views.render", return_value="rendered")
+    # make_parser() should return our fake parser
+    monkeypatch.setattr(views, "make_parser", lambda: fake_parser)
 
-    # Act
+    # parseString should be called with parser=fake_parser and return an iterable of events
+    class FakeNode:
+        tagName = "text"
+
+        def toxml(self):
+            return "<text>hello</text>"
+
+    def fake_parse_string(_xml, parser=None):
+        assert parser is fake_parser
+        return [(views.START_ELEMENT, FakeNode())]
+
+    monkeypatch.setattr(views, "parseString", fake_parse_string)
+
+    # comments.objects.filter(id=1).update(comment=text) should be invoked
+    class FakeFilter:
+        def __init__(self):
+            self.updated = None
+
+        def update(self, comment):
+            self.updated = comment
+            return 1
+
+    fake_filter = FakeFilter()
+
+    class FakeCommentsObjects:
+        def filter(self, id):
+            assert id == 1
+            return fake_filter
+
+    monkeypatch.setattr(views, "comments", SimpleNamespace(objects=FakeCommentsObjects()))
+
+    # render() can return any sentinel
+    sentinel = object()
+    monkeypatch.setattr(views, "render", lambda request, template_name: sentinel)
+
+    request = SimpleNamespace(user=SimpleNamespace(is_authenticated=True), body=b"<text>hello</text>")
+
     result = views.xxe_parse(request)
 
-    # Assert
-    make_parser_mock.assert_called_once()
-    parser.setFeature.assert_called_once_with(views.feature_external_ges, False)
-    parse_string_mock.assert_called_once()
-    render_mock.assert_called_once_with(request, "Lab/XXE/xxe_lab.html")
-    assert result == "rendered"
+    assert (views.feature_external_ges, False) in fake_parser.features
+    assert fake_filter.updated == "hello"
+    assert result is sentinel
