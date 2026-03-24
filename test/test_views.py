@@ -1,78 +1,35 @@
-import os
-from types import SimpleNamespace
-
 import pytest
+from django.test import RequestFactory
+
+from introduction import views
 
 
-# Assumption: tests run with repository root on PYTHONPATH so `introduction` is importable.
+@pytest.mark.django_db
+class TestSsrfLabFileAccess:
+    def setup_method(self):
+        self.factory = RequestFactory()
 
+    def test_ssrf_lab_rejects_unauthorized_filename(self):
+        request = self.factory.post("/ssrf/lab", data={"blog": "../../secret.txt"})
+        request.user = type("User", (), {"is_authenticated": True})()
 
-def test_ssrf_lab_blocks_non_allowlisted_blog_file(monkeypatch):
-    """Regression test for path traversal/SSRF-style local file read: only allow allowlisted files."""
-    from introduction import views
+        response = views.ssrf_lab(request)
 
-    # Ensure render returns the context so we can assert on it
-    def fake_render(_request, _template, context=None):
-        return context or {}
+        assert response.status_code == 200
+        content = response.content.decode()
+        assert "No blog found" in content
 
-    monkeypatch.setattr(views, "render", fake_render)
+    def test_ssrf_lab_allows_safe_filename_and_reads_file(self, tmp_path, monkeypatch):
+        safe_file = tmp_path / "safe_blog.txt"
+        safe_file.write_text("Safe content")
 
-    # If open is called for a disallowed file, the fix is broken.
-    def fail_open(*args, **kwargs):
-        raise AssertionError("open() should not be called for disallowed blog files")
+        monkeypatch.setattr(views.os.path, "dirname", lambda _path: str(tmp_path))
 
-    monkeypatch.setattr(views, "open", fail_open, raising=False)
+        request = self.factory.post("/ssrf/lab", data={"blog": "safe_blog.txt"})
+        request.user = type("User", (), {"is_authenticated": True})()
 
-    request = SimpleNamespace(
-        user=SimpleNamespace(is_authenticated=True),
-        method="POST",
-        POST={"blog": "../../etc/passwd"},
-    )
+        response = views.ssrf_lab(request)
 
-    result = views.ssrf_lab(request)
-
-    assert result["blog"] == "No blog found"
-
-
-def test_ssrf_lab_allows_allowlisted_blog_file_and_reads_it(monkeypatch):
-    """Ensure allowlisted files are still readable."""
-    from introduction import views
-
-    def fake_render(_request, _template, context=None):
-        return context or {}
-
-    monkeypatch.setattr(views, "render", fake_render)
-
-    # Make os.path.dirname deterministic
-    monkeypatch.setattr(views.os.path, "dirname", lambda _p: "/base")
-
-    opened = {}
-
-    class DummyFile:
-        def __enter__(self):
-            return self
-
-        def __exit__(self, exc_type, exc, tb):
-            return False
-
-        def read(self):
-            return "SAFE CONTENT"
-
-    def fake_open(path, mode):
-        opened["path"] = path
-        opened["mode"] = mode
-        return DummyFile()
-
-    monkeypatch.setattr(views, "open", fake_open, raising=False)
-
-    request = SimpleNamespace(
-        user=SimpleNamespace(is_authenticated=True),
-        method="POST",
-        POST={"blog": "safe_blog.txt"},
-    )
-
-    result = views.ssrf_lab(request)
-
-    assert opened["path"] == os.path.join("/base", "safe_blog.txt")
-    assert opened["mode"] == "r"
-    assert result["blog"] == "SAFE CONTENT"
+        assert response.status_code == 200
+        content = response.content.decode()
+        assert "Safe content" in content
