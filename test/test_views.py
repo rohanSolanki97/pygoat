@@ -2,26 +2,39 @@ import types
 
 import pytest
 
-
-def _make_request(*, authenticated=True, body=b""):
-    user = types.SimpleNamespace(is_authenticated=authenticated)
-    return types.SimpleNamespace(method="POST", body=body, user=user)
+# Assumption: Django app module path is "introduction.views" based on source file location.
+import introduction.views as views
 
 
 def test_xxe_parse_disables_external_general_entities(mocker):
-    # This test asserts the security fix: external entity processing is disabled.
-    import introduction.views as views
+    # Arrange
+    request = types.SimpleNamespace(
+        user=types.SimpleNamespace(is_authenticated=True),
+        body=b"<text>Hello</text>",
+    )
 
-    parser_mock = mocker.Mock()
-    mocker.patch.object(views, "make_parser", return_value=parser_mock)
+    parser = mocker.Mock()
+    make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser)
 
-    # Avoid real XML parsing; we only care about parser feature flag.
-    mocker.patch.object(views, "parseString", return_value=[])
-    mocker.patch.object(views, "render", return_value="rendered")
+    # parseString is used as an iterator of (event, node)
+    node = types.SimpleNamespace(tagName="text", toxml=lambda: "<text>Hello</text>")
+    parse_string_mock = mocker.patch(
+        "introduction.views.parseString",
+        return_value=[(views.START_ELEMENT, node)],
+    )
 
-    # Provide minimal body; parseString is mocked.
-    req = _make_request(body=b"<root/>")
+    # comments.objects.filter(id=1).update(comment=text)
+    comments_mock = mocker.patch("introduction.views.comments")
+    comments_mock.objects.filter.return_value.update.return_value = 1
 
-    views.xxe_parse(req)
+    render_mock = mocker.patch("introduction.views.render", return_value="rendered")
 
-    parser_mock.setFeature.assert_called_once_with(views.feature_external_ges, False)
+    # Act
+    result = views.xxe_parse(request)
+
+    # Assert
+    make_parser_mock.assert_called_once()
+    parser.setFeature.assert_called_once_with(views.feature_external_ges, False)
+    parse_string_mock.assert_called_once()
+    render_mock.assert_called_once_with(request, "Lab/XXE/xxe_lab.html")
+    assert result == "rendered"
