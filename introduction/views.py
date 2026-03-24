@@ -920,13 +920,20 @@ def ssrf_lab(request):
         if request.method=="GET":
             return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":"Read Blog About SSRF"})
         else:
-            file=request.POST["blog"]
-            try :
-                dirname = os.path.dirname(__file__)
-                filename = os.path.join(dirname, file)
-                file = open(filename,"r")
+            blog_key = request.POST.get('blog', '')
+            # Define allowed files mapping - update allowed_files as needed
+            allowed_files = {
+                'blog1': os.path.join(os.path.dirname(__file__), 'blogs', 'blog1.html'),
+                'blog2': os.path.join(os.path.dirname(__file__), 'blogs', 'blog2.html')
+            }
+            if blog_key in allowed_files:
+                filename = allowed_files[blog_key]
+            else:
+                return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "Invalid blog selected"})
+            try:
+                file = open(filename, "r")
                 data = file.read()
-                return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":data})
+                return render(request, "Lab/ssrf/ssrf_lab.html", {"blog":data})
             except:
                 return render(request, "Lab/ssrf/ssrf_lab.html", {"blog": "No blog found"})
     else:
