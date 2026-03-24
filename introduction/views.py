@@ -958,9 +958,10 @@ def ssrf_lab2(request):
         return render(request, "Lab/ssrf/ssrf_lab2.html")
 
     elif request.method == "POST":
-        url = request.POST["url"]
+        # TODO: Replace 'https://safe.example.com/endpoint' with a constant or validated URL as per application requirements
+        safe_url = 'https://safe.example.com/endpoint'
         try:
-            response = requests.get(url)
+            response = requests.get(safe_url)
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"response": response.content.decode()})
         except:
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"error": "Invalid URL"})
