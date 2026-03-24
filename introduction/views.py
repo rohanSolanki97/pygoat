@@ -920,11 +920,18 @@ def ssrf_lab(request):
         if request.method=="GET":
             return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":"Read Blog About SSRF"})
         else:
-            file=request.POST["blog"]
-            try :
+            key = request.POST["blog"]
+            allowed_files = {
+                "default": "safe_blog.txt",
+                "option1": "option1_blog.txt",  # TODO: update whitelist with valid mappings as necessary
+            }
+            if key not in allowed_files:
+                return HttpResponseBadRequest("Invalid blog selection")
+            safe_filename = allowed_files[key]
+            try:
                 dirname = os.path.dirname(__file__)
-                filename = os.path.join(dirname, file)
-                file = open(filename,"r")
+                filename = os.path.join(dirname, safe_filename)
+                file = open(filename, "r")
                 data = file.read()
                 return render(request,"Lab/ssrf/ssrf_lab.html",{"blog":data})
             except:
