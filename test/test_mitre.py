@@ -1,36 +1,33 @@
-import json
 import types
 
 import pytest
 
-
-def _make_request(*, authenticated=True, method="POST", post_data=None, body=b""):
-    user = types.SimpleNamespace(is_authenticated=authenticated)
-    return types.SimpleNamespace(method=method, POST=post_data or {}, body=body, user=user)
+# Assumption: Django app module path is "introduction.mitre" based on source file location.
+import introduction.mitre as mitre
 
 
-def test_mitre_lab_17_api_uses_subprocess_without_shell_and_passes_args_list(mocker):
-    # Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
-    import introduction.mitre as mitre
-
-    req = _make_request(post_data={"ip": "127.0.0.1"})
-
-    popen_mock = mocker.Mock()
-    popen_mock.communicate.return_value = (
-        b"STATE SERVICE\n\n22/tcp open ssh\n",
-        b"",
+def test_mitre_lab_17_api_uses_safe_subprocess_args_and_shell_false(mocker):
+    # Arrange
+    request = types.SimpleNamespace(
+        method="POST",
+        POST={"ip": "127.0.0.1; touch /tmp/pwned"},
     )
 
-    def _popen_side_effect(cmd, shell, stdout, stderr):
-        # Secure behavior: shell must be False and command must be a list (no string concatenation).
-        assert shell is False
-        assert cmd == ["nmap", "127.0.0.1"]
-        return popen_mock
+    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
+    process = mocker.Mock()
+    process.communicate.return_value = (b"STATE SERVICE\n\n80/tcp open http\n", b"")
+    popen_mock.return_value = process
 
-    mocker.patch.object(mitre.subprocess, "Popen", side_effect=_popen_side_effect)
-    mocker.patch.object(mitre, "JsonResponse", side_effect=lambda payload: payload)
+    json_response_mock = mocker.patch("introduction.mitre.JsonResponse", side_effect=lambda payload: payload)
 
-    result = mitre.mitre_lab_17_api(req)
+    # Act
+    result = mitre.mitre_lab_17_api(request)
 
+    # Assert
+    popen_mock.assert_called_once()
+    args, kwargs = popen_mock.call_args
+    assert args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
+    assert kwargs["shell"] is False
     assert "ports" in result
-    assert result["ports"] == ["22/tcp open ssh"]
+    assert result["ports"] == ["80/tcp open http"]
+    json_response_mock.assert_called_once()
