@@ -20,6 +20,7 @@ from xml.sax.handler import feature_external_ges
 
 import jwt
 import requests
+from urllib.parse import urlparse  # Developer: Import for URL validation
 import yaml
 from argon2 import PasswordHasher
 from django.contrib import messages
@@ -959,6 +960,9 @@ def ssrf_lab2(request):
 
     elif request.method == "POST":
         url = request.POST["url"]
+        parsed_url = urlparse(url)
+        if parsed_url.scheme not in ("http", "https") or parsed_url.netloc != "safe.example.com":  # Developer: Replace 'safe.example.com' with appropriate safe domain.
+            return render(request, "Lab/ssrf/ssrf_lab2.html", {"error": "Invalid URL"})
         try:
             response = requests.get(url)
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"response": response.content.decode()})
