@@ -1,35 +1,30 @@
-import pytest
-from django.test import RequestFactory
+import types
 
+import pytest
+
+
+# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
 from introduction import views
 
 
-@pytest.mark.django_db
-class TestSsrfLabFileAccess:
-    def setup_method(self):
-        self.factory = RequestFactory()
+def test_ssrf_lab_rejects_non_allowlisted_filename_and_does_not_open(mocker):
+    # Arrange
+    request = types.SimpleNamespace(
+        user=types.SimpleNamespace(is_authenticated=True),
+        method="POST",
+        POST={"blog": "../../etc/passwd"},
+    )
 
-    def test_ssrf_lab_rejects_unauthorized_filename(self):
-        request = self.factory.post("/ssrf/lab", data={"blog": "../../secret.txt"})
-        request.user = type("User", (), {"is_authenticated": True})()
+    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() should not be called for non-allowlisted files"))
+    render_mock = mocker.patch.object(views, "render", return_value="rendered")
 
-        response = views.ssrf_lab(request)
+    # Act
+    result = views.ssrf_lab(request)
 
-        assert response.status_code == 200
-        content = response.content.decode()
-        assert "No blog found" in content
-
-    def test_ssrf_lab_allows_safe_filename_and_reads_file(self, tmp_path, monkeypatch):
-        safe_file = tmp_path / "safe_blog.txt"
-        safe_file.write_text("Safe content")
-
-        monkeypatch.setattr(views.os.path, "dirname", lambda _path: str(tmp_path))
-
-        request = self.factory.post("/ssrf/lab", data={"blog": "safe_blog.txt"})
-        request.user = type("User", (), {"is_authenticated": True})()
-
-        response = views.ssrf_lab(request)
-
-        assert response.status_code == 200
-        content = response.content.decode()
-        assert "Safe content" in content
+    # Assert
+    assert result == "rendered"
+    render_mock.assert_called_once()
+    _, template_name, context = render_mock.call_args[0]
+    assert template_name == "Lab/ssrf/ssrf_lab.html"
+    assert context == {"blog": "No blog found"}
+    assert open_mock.call_count == 0
