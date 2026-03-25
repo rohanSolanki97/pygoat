@@ -20,7 +20,10 @@ def test_ssrf_lab_blocks_non_allowlisted_file_and_does_not_open(mocker):
     # Arrange
     request = _make_authenticated_post("../../etc/passwd")
 
-    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() should not be called for disallowed file"))
+    open_mock = mocker.patch(
+        "builtins.open",
+        side_effect=AssertionError("open() should not be called for disallowed file"),
+    )
     render_mock = mocker.patch("introduction.views.render", side_effect=lambda _req, _tpl, ctx=None: ctx)
 
     # Act
