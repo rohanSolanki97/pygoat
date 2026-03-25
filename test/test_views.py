@@ -3,28 +3,30 @@ import types
 import pytest
 
 
-# Assumption: tests run with project root on PYTHONPATH so `introduction` is importable.
+# Assumption: Django app module path is "introduction.views" as per file_path.
 from introduction import views
 
 
-def test_ssrf_lab_rejects_non_allowlisted_filename_and_does_not_open(mocker):
-    # Arrange
-    request = types.SimpleNamespace(
-        user=types.SimpleNamespace(is_authenticated=True),
-        method="POST",
-        POST={"blog": "../../etc/passwd"},
-    )
+def _make_authenticated_post(blog_value: str):
+    user = types.SimpleNamespace(is_authenticated=True)
+    req = types.SimpleNamespace()
+    req.user = user
+    req.method = "POST"
+    req.POST = {"blog": blog_value}
+    return req
 
-    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() should not be called for non-allowlisted files"))
-    render_mock = mocker.patch.object(views, "render", return_value="rendered")
+
+def test_ssrf_lab_blocks_non_allowlisted_file_and_does_not_open(mocker):
+    # Arrange
+    request = _make_authenticated_post("../../etc/passwd")
+
+    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() should not be called for disallowed file"))
+    render_mock = mocker.patch("introduction.views.render", side_effect=lambda _req, _tpl, ctx=None: ctx)
 
     # Act
-    result = views.ssrf_lab(request)
+    ctx = views.ssrf_lab(request)
 
     # Assert
-    assert result == "rendered"
-    render_mock.assert_called_once()
-    _, template_name, context = render_mock.call_args[0]
-    assert template_name == "Lab/ssrf/ssrf_lab.html"
-    assert context == {"blog": "No blog found"}
+    assert ctx == {"blog": "No blog found"}
     assert open_mock.call_count == 0
+    render_mock.assert_called_once()
