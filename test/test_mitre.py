@@ -1,35 +1,38 @@
-import pytest
-from django.http import HttpRequest
-from django.test import RequestFactory
+import types
 
+import pytest
+
+
+# Assumption: Django app module path is "introduction.mitre" as per file_path.
 from introduction import mitre
 
 
-@pytest.mark.django_db
-class TestMitreLab17CommandSafety:
-    def setup_method(self):
-        self.factory = RequestFactory()
+def _make_request(ip: str):
+    req = types.SimpleNamespace()
+    req.method = "POST"
+    req.POST = {"ip": ip}
+    return req
 
-    def test_command_out_uses_list_and_shell_false(self, mocker):
-        mocked_popen = mocker.patch("introduction.mitre.subprocess.Popen")
-        process_mock = mocker.Mock()
-        process_mock.communicate.return_value = (b"STATE SERVICE\nopen http\n", b"")
-        mocked_popen.return_value = process_mock
 
-        command = ["nmap", "127.0.0.1"]
-        mitre.command_out(command)
+def test_mitre_lab_17_api_uses_shell_false_and_argument_list(mocker):
+    # Arrange
+    request = _make_request("127.0.0.1; echo pwned")
 
-        mocked_popen.assert_called_once_with(
-            command, shell=False, stdout=mocker.ANY, stderr=mocker.ANY
-        )
+    popen_mock = mocker.Mock()
+    popen_mock.communicate.return_value = (
+        b"STATE SERVICE\n\n22/tcp open ssh\n",
+        b"",
+    )
 
-    def test_mitre_lab_17_api_builds_safe_command_list(self, mocker):
-        mocked_command_out = mocker.patch("introduction.mitre.command_out")
-        mocked_command_out.return_value = (b"STATE SERVICE\nopen http\n", b"")
+    popen_ctor = mocker.patch("introduction.mitre.subprocess.Popen", return_value=popen_mock)
+    mocker.patch("introduction.mitre.JsonResponse", side_effect=lambda payload: payload)
 
-        request = self.factory.post("/mitre/17/api", data={"ip": "127.0.0.1"})
+    # Act
+    payload = mitre.mitre_lab_17_api(request)
 
-        response = mitre.mitre_lab_17_api(request)
-
-        mocked_command_out.assert_called_once_with(["nmap", "127.0.0.1"])
-        assert response.status_code == 200
+    # Assert
+    popen_ctor.assert_called_once()
+    args, kwargs = popen_ctor.call_args
+    assert args[0] == ["nmap", "127.0.0.1; echo pwned"]
+    assert kwargs["shell"] is False
+    assert payload["ports"] == ["22/tcp open ssh"]
