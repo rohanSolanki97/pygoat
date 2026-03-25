@@ -28,6 +28,7 @@ from django.contrib.auth.forms import UserCreationForm
 from django.core import serializers
 from django.http import HttpResponse, HttpResponseBadRequest, JsonResponse
 from django.shortcuts import redirect, render
+from urllib.parse import urlparse
 from django.template import loader
 from django.template.loader import render_to_string
 from django.views.decorators.csrf import csrf_exempt
@@ -959,6 +960,10 @@ def ssrf_lab2(request):
 
     elif request.method == "POST":
         url = request.POST["url"]
+        parsed_url = urlparse(url)
+        allowed_domains = ['example.com']
+        if parsed_url.hostname not in allowed_domains:
+            return render(request, "Lab/ssrf/ssrf_lab2.html", {"error": "Disallowed domain"})
         try:
             response = requests.get(url)
             return render(request, "Lab/ssrf/ssrf_lab2.html", {"response": response.content.decode()})
