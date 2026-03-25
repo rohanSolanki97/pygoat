@@ -230,15 +230,23 @@ def mitre_lab_17(request):
     return render(request, 'mitre/mitre_lab_17.html')
 
 def command_out(command):
-    process = subprocess.Popen(command, shell=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-    return process.communicate()
+    try:
+        process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, shell=False)
+        return process.communicate()
+    except Exception as e:
+        return (b'', str(e).encode())
     
 
 @csrf_exempt
 def mitre_lab_17_api(request):
     if request.method == "POST":
         ip = request.POST.get('ip')
-        command = "nmap " + ip 
+        if not ip:
+            return HttpResponseBadRequest("IP address is required.")
+        ip_regex = r"^(?:[0-9]{1,3}\.){3}[0-9]{1,3}$"
+        if not re.match(ip_regex, ip):
+            return HttpResponseBadRequest("Invalid IP address provided.")
+        command = ["nmap", ip] 
         res, err = command_out(command)
         res = res.decode()
         err = err.decode()
