@@ -13,8 +13,13 @@ def test_ssrf_lab_rejects_non_allowlisted_blog_filename(mocker):
         method="POST",
         POST={"blog": "../../etc/passwd"},
     )
-    render_mock = mocker.patch("introduction.views.render", return_value=types.SimpleNamespace(status_code=200))
-    open_mock = mocker.patch("builtins.open", side_effect=AssertionError("open() must not be called for disallowed files"))
+    render_mock = mocker.patch(
+        "introduction.views.render", return_value=types.SimpleNamespace(status_code=200)
+    )
+    open_mock = mocker.patch(
+        "builtins.open",
+        side_effect=AssertionError("open() must not be called for disallowed files"),
+    )
 
     # Act
     resp = views.ssrf_lab(request)
@@ -35,7 +40,9 @@ def test_ssrf_lab_allows_allowlisted_blog_filename_and_reads_file(mocker):
         method="POST",
         POST={"blog": "safe_blog.txt"},
     )
-    render_mock = mocker.patch("introduction.views.render", return_value=types.SimpleNamespace(status_code=200))
+    render_mock = mocker.patch(
+        "introduction.views.render", return_value=types.SimpleNamespace(status_code=200)
+    )
 
     m = mocker.mock_open(read_data="SAFE CONTENT")
     open_mock = mocker.patch("builtins.open", m)
