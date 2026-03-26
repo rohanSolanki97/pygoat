@@ -2,47 +2,40 @@ import types
 
 import pytest
 
-# Assumption: tests run with repo root on PYTHONPATH so "introduction" is importable.
+# Assumption: tests run with repo root on PYTHONPATH so `introduction` is importable.
 import introduction.views as views
 
 
-def test_xxe_parse_disables_external_general_entities(mocker):
+def _make_request(body: bytes, authenticated=True):
+    user = types.SimpleNamespace(is_authenticated=authenticated)
+    req = types.SimpleNamespace()
+    req.user = user
+    req.body = body
+    return req
+
+
+def test_xxe_parse_disables_external_entities(mocker):
     # Arrange
-    request = types.SimpleNamespace(body=b"<root><text>Hello</text></root>")
+    parser = mocker.Mock()
+    make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser)
 
-    parser_mock = mocker.Mock()
-    make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser_mock)
+    # Avoid real XML parsing; we only assert parser feature configuration.
+    parse_string_mock = mocker.patch("introduction.views.parseString", return_value=[])
 
-    # Avoid real XML parsing; just ensure parser is passed through.
-    mocker.patch(
-        "introduction.views.parseString",
-        return_value=[
-            (
-                views.START_ELEMENT,
-                types.SimpleNamespace(tagName="text", toxml=lambda: "<text>Hello</text>"),
-            )
-        ],
-    )
+    # Avoid DB update side effects
+    comments_mock = mocker.patch("introduction.views.comments")
+    comments_mock.objects.filter.return_value.update.return_value = 1
 
-    # Avoid DB access
-    comments_filter_mock = mocker.Mock()
-    comments_filter_mock.update.return_value = 1
-    mocker.patch.object(
-        views.comments,
-        "objects",
-        mocker.Mock(filter=mocker.Mock(return_value=comments_filter_mock)),
-    )
+    # Avoid template rendering requirements
+    render_mock = mocker.patch("introduction.views.render", return_value=mocker.Mock())
 
-    # Avoid template rendering
-    render_mock = mocker.patch(
-        "introduction.views.render", return_value=types.SimpleNamespace(status_code=200)
-    )
+    request = _make_request(b"<root><text>hello</text></root>", authenticated=True)
 
     # Act
-    resp = views.xxe_parse(request)
+    views.xxe_parse(request)
 
-    # Assert: secure behavior - external entity processing disabled
+    # Assert
     make_parser_mock.assert_called_once()
-    parser_mock.setFeature.assert_called_once_with(views.feature_external_ges, False)
-    assert resp.status_code == 200
+    parser.setFeature.assert_called_once_with(views.feature_external_ges, False)
+    parse_string_mock.assert_called_once()
     render_mock.assert_called_once()
