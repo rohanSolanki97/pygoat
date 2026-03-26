@@ -1,38 +1,38 @@
 import types
+from unittest.mock import MagicMock
 
 import pytest
 
-
-# Assumption: Django app module path is "introduction.mitre" as per file_path.
-from introduction import mitre
-
-
-def _make_request(ip: str):
-    req = types.SimpleNamespace()
-    req.method = "POST"
-    req.POST = {"ip": ip}
-    return req
+# Assumption: tests run with repo root on PYTHONPATH so "introduction" is importable.
+import introduction.mitre as mitre
 
 
-def test_mitre_lab_17_api_uses_shell_false_and_argument_list(mocker):
+def test_mitre_lab_17_api_uses_subprocess_without_shell_and_list_args(mocker):
     # Arrange
-    request = _make_request("127.0.0.1; echo pwned")
+    request = types.SimpleNamespace(
+        method="POST",
+        POST={"ip": "127.0.0.1; touch /tmp/pwned"},
+    )
 
-    popen_mock = mocker.Mock()
-    popen_mock.communicate.return_value = (
+    popen_mock = mocker.patch("introduction.mitre.subprocess.Popen")
+    process_mock = MagicMock()
+    process_mock.communicate.return_value = (
         b"STATE SERVICE\n\n22/tcp open ssh\n",
         b"",
     )
-
-    popen_ctor = mocker.patch("introduction.mitre.subprocess.Popen", return_value=popen_mock)
-    mocker.patch("introduction.mitre.JsonResponse", side_effect=lambda payload: payload)
+    popen_mock.return_value = process_mock
 
     # Act
-    payload = mitre.mitre_lab_17_api(request)
+    resp = mitre.mitre_lab_17_api(request)
 
-    # Assert
-    popen_ctor.assert_called_once()
-    args, kwargs = popen_ctor.call_args
-    assert args[0] == ["nmap", "127.0.0.1; echo pwned"]
+    # Assert: secure behavior - shell=False and args passed as list (no shell parsing)
+    popen_mock.assert_called_once()
+    args, kwargs = popen_mock.call_args
+    assert args[0] == ["nmap", "127.0.0.1; touch /tmp/pwned"]
     assert kwargs["shell"] is False
+    assert kwargs["stdout"] is mitre.subprocess.PIPE
+    assert kwargs["stderr"] is mitre.subprocess.PIPE
+
+    assert resp.status_code == 200
+    payload = resp.json()
     assert payload["ports"] == ["22/tcp open ssh"]
