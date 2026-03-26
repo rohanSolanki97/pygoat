@@ -14,15 +14,29 @@ def test_xxe_parse_disables_external_general_entities(mocker):
     make_parser_mock = mocker.patch("introduction.views.make_parser", return_value=parser_mock)
 
     # Avoid real XML parsing; just ensure parser is passed through.
-    mocker.patch("introduction.views.parseString", return_value=[(views.START_ELEMENT, types.SimpleNamespace(tagName="text", toxml=lambda: "<text>Hello</text>"))])
+    mocker.patch(
+        "introduction.views.parseString",
+        return_value=[
+            (
+                views.START_ELEMENT,
+                types.SimpleNamespace(tagName="text", toxml=lambda: "<text>Hello</text>"),
+            )
+        ],
+    )
 
     # Avoid DB access
     comments_filter_mock = mocker.Mock()
     comments_filter_mock.update.return_value = 1
-    mocker.patch.object(views.comments, "objects", mocker.Mock(filter=mocker.Mock(return_value=comments_filter_mock)))
+    mocker.patch.object(
+        views.comments,
+        "objects",
+        mocker.Mock(filter=mocker.Mock(return_value=comments_filter_mock)),
+    )
 
     # Avoid template rendering
-    render_mock = mocker.patch("introduction.views.render", return_value=types.SimpleNamespace(status_code=200))
+    render_mock = mocker.patch(
+        "introduction.views.render", return_value=types.SimpleNamespace(status_code=200)
+    )
 
     # Act
     resp = views.xxe_parse(request)
